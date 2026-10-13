@@ -563,19 +563,38 @@ function playOne(src, id, onEnd, onFail) {
     if (p && typeof p.catch === 'function') p.catch(err => { if (!err || err.name !== 'AbortError') fail(); });
   } catch (err) { onFail(); }
 }
+// word-by-word reading: the words are fetched as soon as the button is pressed, and the half-second of
+// silence each recording carries at both ends is skipped, so the words follow each other like speech
+const LEAD = 0.2, TAIL = 0.25;
+function playParts(auds, id, done) {
+  const go = i => {
+    if (id !== speakId) return;
+    if (i >= auds.length) return done();
+    const a = auds[i];
+    player = a;
+    let moved = false;
+    const next = () => { if (!moved) { moved = true; go(i + 1); } };
+    a.addEventListener('error', next, { once: true });
+    a.addEventListener('ended', next, { once: true });
+    a.addEventListener('playing', () => {
+      if (i < auds.length - 1 && isFinite(a.duration)) setTimeout(() => { if (id === speakId) { next(); } }, Math.max(0, a.duration - a.currentTime - TAIL) * 1000);
+    }, { once: true });
+    try { if (i > 0) a.currentTime = LEAD; } catch (err) {}
+    const p = a.play();
+    if (p && typeof p.catch === 'function') p.catch(err => { if (!err || err.name !== 'AbortError') next(); });
+  };
+  go(0);
+}
 function speak(word, el, us) {
   if (player) { try { player.pause(); } catch (err) {} player = null; }
   const id = ++speakId;
   playing(el, true);
   const stop = () => { if (id === speakId) { clearTimeout(speak.t); playing(el, false); } };
-  clearTimeout(speak.t); speak.t = setTimeout(stop, 8000);
+  clearTimeout(speak.t); speak.t = setTimeout(stop, 10000);
   const device = () => { if (id !== speakId) return; deviceSpeak(word); clearTimeout(speak.t); speak.t = setTimeout(stop, 1500); };
   const parts = word.split(/[\s\-–]+/).filter(Boolean);
-  const byWord = (i) => {
-    if (i >= parts.length) return stop();
-    playOne(youdao(parts[i], us), id, () => setTimeout(() => byWord(i + 1), 120), () => byWord(i + 1));
-  };
-  playOne(youdao(word, us), id, stop, parts.length > 1 ? () => byWord(0) : device);
+  const auds = parts.length > 1 ? parts.map(w => { const a = new Audio(youdao(w, us)); a.preload = 'auto'; try { a.load(); } catch (err) {} return a; }) : null;
+  playOne(youdao(word, us), id, stop, auds ? () => playParts(auds, id, stop) : device);
 }
 if (window.speechSynthesis && speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', () => {});
 
